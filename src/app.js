@@ -98,7 +98,7 @@ function createApp(database = createDatabase()) {
 
   const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
     .split(',').map((origin) => origin.trim()).filter(Boolean);
-  const allowedOriginSet = new Set(allowedOrigins);
+  const allowedOriginSet = new Set([...allowedOrigins, 'https://calicarebotanica.netlify.app']);
   for (const origin of allowedOrigins) {
     try {
       const alias = new URL(origin);
