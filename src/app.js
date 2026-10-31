@@ -164,7 +164,22 @@ function createApp(database = createDatabase()) {
       </table>
     </body></html>`;
   };
-  const sendApplicantNotification = async (to, subject, text) => {
+  const renderPasswordResetEmailHtml = (name, resetUrl) => `<!doctype html><html><body style="margin:0;padding:32px 14px;background:#f2f5ef;font-family:Arial,Helvetica,sans-serif;color:#304636">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0">Use the secure link to reset your ClariCare Botanica password.</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;margin:0 auto;border-collapse:separate;border-spacing:0;background:#ffffff;border:1px solid #e2e9df;border-radius:14px;overflow:hidden">
+      <tr><td style="padding:24px 32px;background:#304636;color:#ffffff"><div style="font-family:Georgia,serif;font-size:22px;letter-spacing:1px">CLARICARE</div><div style="margin-top:4px;color:#dce7d8;font-size:10px;letter-spacing:2px">BOTANICA LTD</div></td></tr>
+      <tr><td style="padding:32px"><h1 style="margin:0 0 20px;color:#304636;font-family:Georgia,serif;font-size:25px;font-weight:500;line-height:1.3">Reset your password</h1>
+        <p style="margin:0 0 16px;color:#47564a;font-size:15px;line-height:1.75">Hello ${escapeApplicantEmailHtml(name)},</p>
+        <p style="margin:0 0 24px;color:#47564a;font-size:15px;line-height:1.75">We received a request to reset the password for your ClariCare Botanica account. Select the button below to choose a new password. This link expires in one hour.</p>
+        <p style="margin:0 0 24px"><a href="${escapeApplicantEmailHtml(resetUrl)}" style="display:inline-block;padding:13px 24px;border-radius:6px;background:#456849;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none">Reset password</a></p>
+        <p style="margin:0 0 8px;color:#667368;font-size:13px;line-height:1.7">If the button does not work, copy and paste this address into your browser:</p>
+        <p style="margin:0 0 24px;overflow-wrap:anywhere;color:#456849;font-size:13px;line-height:1.7"><a href="${escapeApplicantEmailHtml(resetUrl)}" style="color:#456849">${escapeApplicantEmailHtml(resetUrl)}</a></p>
+        <p style="margin:0;color:#667368;font-size:13px;line-height:1.7">If you did not request a password reset, you can ignore this email. Your password will remain unchanged.</p>
+      </td></tr>
+      <tr><td style="padding:18px 32px;border-top:1px solid #e8eee5;background:#fafbf9;color:#788477;font-size:11px;line-height:1.6">ClariCare Botanica Ltd<br>Clarity in Skincare. Care Beyond the Surface.<br><a href="mailto:claricarebotanica@gmail.com" style="color:#456849;text-decoration:none">claricarebotanica@gmail.com</a></td></tr>
+    </table>
+  </body></html>`;
+  const sendApplicantNotification = async (to, subject, text, html = null) => {
     const { SMTP_USER, SMTP_APP_PASSWORD, SMTP_FROM } = process.env;
     if (!SMTP_USER || !SMTP_APP_PASSWORD || !nodemailer) {
       return { sent: false, reason: 'Email is not configured on the backend.' };
@@ -177,7 +192,7 @@ function createApp(database = createDatabase()) {
         secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE.toLowerCase() === 'true' : smtpPort === 465,
         auth: { user: SMTP_USER, pass: SMTP_APP_PASSWORD.replace(/\s/g, '') },
       });
-      await transporter.sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text, html: renderApplicantEmailHtml(subject, text) });
+      await transporter.sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text, html: html || renderApplicantEmailHtml(subject, text) });
       return { sent: true };
     } catch (error) {
       console.error('Applicant notification email failed:', error.message);
@@ -613,8 +628,9 @@ function createApp(database = createDatabase()) {
     const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(token)}`;
     const emailResult = await sendApplicantNotification(
       user.email,
-      'Reset your ClariCare Botanica password',
-      `Hello ${user.name},\n\nWe received a request to reset your password. Use this link within one hour:\n${resetUrl}\n\nIf you did not request this, you can ignore this email.`
+      'Password reset request | ClariCare Botanica',
+      `Hello ${user.name},\n\nWe received a request to reset the password for your ClariCare Botanica account. Use this secure link within one hour to choose a new password:\n${resetUrl}\n\nIf you did not request a password reset, you can ignore this email. Your password will remain unchanged.`,
+      renderPasswordResetEmailHtml(user.name, resetUrl)
     );
     if (!emailResult.sent) {
       database.db.prepare('DELETE FROM password_reset_tokens WHERE id=?').run(tokenId);
