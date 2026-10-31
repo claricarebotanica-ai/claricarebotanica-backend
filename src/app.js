@@ -584,6 +584,70 @@ function createApp(database = createDatabase()) {
     });
   });
 
+  app.post('/api/auth/forgot-password', async (req, res) => {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const genericResponse = { message: 'If an account exists for that email, password reset instructions will be sent shortly.' };
+    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.json(genericResponse);
+
+    const user = database.db.prepare('SELECT id, name, email FROM users WHERE email=? AND deleted_at IS NULL').get(email);
+    if (!user) return res.json(genericResponse);
+
+    const recentlyRequested = database.db.prepare(`
+      SELECT id FROM password_reset_tokens
+      WHERE user_id=? AND created_at > datetime('now', '-1 minute')
+      LIMIT 1
+    `).get(user.id);
+    if (recentlyRequested) return res.json(genericResponse);
+
+    const token = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const tokenId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    database.db.prepare('DELETE FROM password_reset_tokens WHERE user_id=?').run(user.id);
+    database.db.prepare(`
+      INSERT INTO password_reset_tokens (id,user_id,token_hash,expires_at)
+      VALUES (?,?,?,?)
+    `).run(tokenId, user.id, tokenHash, expiresAt);
+
+    const frontendUrl = (process.env.FRONTEND_URL || 'https://claricarebotanica.com').replace(/\/+$/, '');
+    const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(token)}`;
+    const emailResult = await sendApplicantNotification(
+      user.email,
+      'Reset your ClariCare Botanica password',
+      `Hello ${user.name},\n\nWe received a request to reset your password. Use this link within one hour:\n${resetUrl}\n\nIf you did not request this, you can ignore this email.`
+    );
+    if (!emailResult.sent) {
+      database.db.prepare('DELETE FROM password_reset_tokens WHERE id=?').run(tokenId);
+      console.error(`Password reset email could not be sent: ${emailResult.reason}`);
+    }
+    return res.json(genericResponse);
+  });
+
+  app.post('/api/auth/reset-password', async (req, res) => {
+    const { token, password } = req.body || {};
+    if (typeof token !== 'string' || !token || typeof password !== 'string' || password.length < 8 || password.length > 200) {
+      return res.status(400).json({ error: 'A valid reset token and a password of 8 to 200 characters are required.' });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const reset = database.db.prepare(`
+      SELECT prt.id, prt.user_id FROM password_reset_tokens prt
+      JOIN users u ON u.id=prt.user_id
+      WHERE prt.token_hash=? AND prt.expires_at > ? AND u.deleted_at IS NULL
+    `).get(tokenHash, new Date().toISOString());
+    if (!reset) return res.status(400).json({ error: 'This password reset link is invalid or has expired. Request a new one.' });
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const completeReset = database.db.transaction(() => {
+      const changed = database.db.prepare('UPDATE users SET password_hash=? WHERE id=? AND deleted_at IS NULL').run(passwordHash, reset.user_id);
+      if (!changed.changes) return false;
+      database.db.prepare('DELETE FROM password_reset_tokens WHERE user_id=?').run(reset.user_id);
+      return true;
+    });
+    if (!completeReset()) return res.status(400).json({ error: 'This password reset link is invalid or has expired. Request a new one.' });
+    return res.json({ message: 'Password reset successfully. You can now sign in with your new password.' });
+  });
+
   app.post('/api/admin/users', requireAuth, requireRole('admin'), async (req, res) => {
     const { name, email, password, role, position, departmentId, positionId } = req.body || {};
     if (typeof name !== 'string' || typeof email !== 'string' || !['admin', 'employee', 'referrer'].includes(role)) {
