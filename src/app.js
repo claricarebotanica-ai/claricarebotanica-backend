@@ -192,8 +192,8 @@ function createApp(database = createDatabase()) {
         secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE.toLowerCase() === 'true' : smtpPort === 465,
         auth: { user: SMTP_USER, pass: SMTP_APP_PASSWORD.replace(/\s/g, '') },
       });
-      await transporter.sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text, html: html || renderApplicantEmailHtml(subject, text) });
-      return { sent: true };
+      const info = await transporter.sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text, html: html || renderApplicantEmailHtml(subject, text) });
+      return { sent: true, messageId: info.messageId || null };
     } catch (error) {
       console.error('Applicant notification email failed:', error.message);
       return { sent: false, reason: 'The application was saved, but its email notification could not be sent.' };
@@ -605,14 +605,20 @@ function createApp(database = createDatabase()) {
     if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.json(genericResponse);
 
     const user = database.db.prepare('SELECT id, name, email FROM users WHERE email=? AND deleted_at IS NULL').get(email);
-    if (!user) return res.json(genericResponse);
+    if (!user) {
+      console.info('Password reset request: no active account matched.');
+      return res.json(genericResponse);
+    }
 
     const recentlyRequested = database.db.prepare(`
       SELECT id FROM password_reset_tokens
       WHERE user_id=? AND created_at > datetime('now', '-1 minute')
       LIMIT 1
     `).get(user.id);
-    if (recentlyRequested) return res.json(genericResponse);
+    if (recentlyRequested) {
+      console.info('Password reset request: email suppressed by one-minute cooldown.');
+      return res.json(genericResponse);
+    }
 
     const token = crypto.randomBytes(32).toString('base64url');
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
@@ -624,7 +630,7 @@ function createApp(database = createDatabase()) {
       VALUES (?,?,?,?)
     `).run(tokenId, user.id, tokenHash, expiresAt);
 
-    const frontendUrl = (process.env.FRONTEND_URL || 'https://claricarebotanica.com').replace(/\/+$/, '');
+    const frontendUrl = (process.env.FRONTEND_URL || process.env.WEB_APP_URL || 'https://claricarebotanica.com').replace(/\/+$/, '');
     const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(token)}`;
     const emailResult = await sendApplicantNotification(
       user.email,
@@ -635,6 +641,8 @@ function createApp(database = createDatabase()) {
     if (!emailResult.sent) {
       database.db.prepare('DELETE FROM password_reset_tokens WHERE id=?').run(tokenId);
       console.error(`Password reset email could not be sent: ${emailResult.reason}`);
+    } else {
+      console.info('Password reset email accepted by SMTP.', emailResult.messageId ? { messageId: emailResult.messageId } : undefined);
     }
     return res.json(genericResponse);
   });
