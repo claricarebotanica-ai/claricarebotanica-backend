@@ -3,7 +3,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const { v4: uuidv4 } = require('uuid');
 
-function createDatabase(filePath = './data/claricare.db') {
+function createDatabase(filePath = process.env.DATABASE_PATH || './data/claricare.db') {
   const normalizedPath = filePath === ':memory:' ? ':memory:' : path.resolve(filePath);
 
   if (normalizedPath !== ':memory:') {
