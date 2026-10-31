@@ -96,9 +96,9 @@ const agreementForApi = (agreement) => ({
 function createApp(database = createDatabase()) {
   const app = express();
 
-  const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
+  const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,https://claricarebotanica.com')
     .split(',').map((origin) => origin.trim()).filter(Boolean);
-  const allowedOriginSet = new Set([...allowedOrigins, 'https://calicarebotanica.netlify.app']);
+  const allowedOriginSet = new Set([...allowedOrigins, 'https://claricarebotanica.com', 'https://www.claricarebotanica.com', 'https://calicarebotanica.netlify.app']);
   for (const origin of allowedOrigins) {
     try {
       const alias = new URL(origin);
@@ -311,7 +311,7 @@ function createApp(database = createDatabase()) {
         secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE.toLowerCase() === 'true' : smtpPort === 465,
         auth: { user: SMTP_USER, pass: SMTP_APP_PASSWORD.replace(/\s/g, '') },
       });
-      const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
+      const frontendUrl = (process.env.FRONTEND_URL || 'https://claricarebotanica.com').replace(/\/+$/, '');
       const url = `${frontendUrl}/#updates`;
       const excerpt = post.excerpt || String(post.body || '').replace(/<[^>]*>/g, '').slice(0, 500);
       await transporter.sendMail({
@@ -693,7 +693,7 @@ function createApp(database = createDatabase()) {
           secure: smtpSecure,
           auth: { user: SMTP_USER, pass: SMTP_APP_PASSWORD.replace(/\s/g, '') },
         });
-        const frontendUrl = (process.env.FRONTEND_URL || allowedOrigins[0] || 'http://localhost:5173').replace(/\/+$/, '');
+        const frontendUrl = (process.env.FRONTEND_URL || 'https://claricarebotanica.com').replace(/\/+$/, '');
         const invitationUrl = `${frontendUrl}/accept-invitation?token=${encodeURIComponent(token)}`;
         await transporter.sendMail({
           from: SMTP_FROM || SMTP_USER,
@@ -1280,7 +1280,7 @@ function createApp(database = createDatabase()) {
     `).run(interviewId, application.id, tokenHash, expiresAt);
     database.db.prepare("UPDATE applications SET status='interview_invited' WHERE id=?").run(application.id);
     addApplicationTimelineEvent(application.id, 'interview_invited', 'Online interview invitation sent.', { changedBy: req.user.id, eventType: 'interview' });
-    const frontendUrl = (process.env.FRONTEND_URL || allowedOrigins[0] || 'http://localhost:5173').replace(/\/+$/, '');
+    const frontendUrl = (process.env.FRONTEND_URL || 'https://claricarebotanica.com').replace(/\/+$/, '');
     const interviewUrl = `${frontendUrl}/applicant?applicationId=${encodeURIComponent(application.id)}&interviewToken=${encodeURIComponent(token)}`;
     const notification = await sendApplicantNotification(
       application.applicant_email,
