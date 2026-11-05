@@ -2,8 +2,19 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { v4: uuidv4 } = require('uuid');
+const { PostgresDatabase } = require('./postgres-database');
 
-function createDatabase(filePath = process.env.DATABASE_PATH || './data/claricare.db') {
+function createDatabase(filePath) {
+  if (filePath === undefined && process.env.DATABASE_URL) {
+    const db = new PostgresDatabase(process.env.DATABASE_URL);
+    try {
+      return initializeDatabase(db);
+    } catch (error) {
+      db.close();
+      throw error;
+    }
+  }
+  filePath = filePath || process.env.DATABASE_PATH || './data/claricare.db';
   const normalizedPath = filePath === ':memory:' ? ':memory:' : path.resolve(filePath);
 
   if (normalizedPath !== ':memory:') {
@@ -14,7 +25,11 @@ function createDatabase(filePath = process.env.DATABASE_PATH || './data/claricar
   }
 
   const db = new Database(normalizedPath);
+  db.isPostgres = false;
+  return initializeDatabase(db);
+}
 
+function initializeDatabase(db) {
   db.exec(`
     PRAGMA foreign_keys = ON;
 
@@ -396,7 +411,9 @@ function createDatabase(filePath = process.env.DATABASE_PATH || './data/claricar
   const materialMovementColumns = db.prepare('PRAGMA table_info(material_movements)').all().map((column) => column.name);
   if (!materialMovementColumns.includes('receipt_url')) db.exec('ALTER TABLE material_movements ADD COLUMN receipt_url TEXT');
   const cartItemColumns = db.prepare('PRAGMA table_info(cart_items)').all().map((column) => column.name);
-  if (!cartItemColumns.includes('variant_label')) {
+  if (!cartItemColumns.includes('variant_label') && db.isPostgres) {
+    db.exec("ALTER TABLE cart_items ADD COLUMN variant_label TEXT NOT NULL DEFAULT ''");
+  } else if (!cartItemColumns.includes('variant_label')) {
     db.transaction(() => {
       db.exec(`
         CREATE TABLE cart_items_new (
