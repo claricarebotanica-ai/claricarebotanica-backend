@@ -698,7 +698,8 @@ function createApp(database = createDatabase()) {
         assignedDepartment = database.db.prepare('SELECT id,name FROM departments WHERE id=?').get(departmentId);
       }
       const { SMTP_USER, SMTP_APP_PASSWORD, SMTP_FROM } = process.env;
-      if (!SMTP_USER || !SMTP_APP_PASSWORD || !nodemailer) {
+      const resendApiKey = process.env.RESEND_API_KEY;
+      if (!resendApiKey && (!SMTP_USER || !SMTP_APP_PASSWORD || !nodemailer)) {
         return res.status(503).json({ error: 'Email is not configured, so the invitation could not be sent.' });
       }
 
@@ -770,25 +771,44 @@ function createApp(database = createDatabase()) {
       const roleName = role === 'referrer' ? 'referrer' : 'employee';
       const article = role === 'referrer' ? 'a' : 'an';
       try {
-        const smtpPort = Number(process.env.SMTP_PORT || 465);
-        const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
-        const smtpSecure = process.env.SMTP_SECURE
-          ? process.env.SMTP_SECURE.toLowerCase() === 'true'
-          : smtpPort === 465;
-        const transporter = nodemailer.createTransport({
-          host: smtpHost,
-          port: smtpPort,
-          secure: smtpSecure,
-          auth: { user: SMTP_USER, pass: SMTP_APP_PASSWORD.replace(/\s/g, '') },
-        });
         const frontendUrl = (process.env.FRONTEND_URL || 'https://claricarebotanica.com').replace(/\/+$/, '');
         const invitationUrl = `${frontendUrl}/accept-invitation?token=${encodeURIComponent(token)}`;
-        await transporter.sendMail({
-          from: SMTP_FROM || SMTP_USER,
+        const email = {
           to: normalizedEmail,
           subject: `You are invited to join ClariCare as ${article} ${roleName}`,
           text: `Hello ${normalizedName},\n\nAn administrator has invited you to join ClariCare as ${article} ${roleName}.${role === 'referrer' ? `\nPosition: ${normalizedPosition}` : `\nDepartment: ${assignedDepartment.name}\nPosition: ${assignedPosition.title}`}\n\nAccept your invitation and choose a password here:\n${invitationUrl}\n\nThis invitation expires in 7 days.`,
-        });
+        };
+        if (resendApiKey) {
+          const response = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${resendApiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              ...email,
+              from: process.env.RESEND_FROM || 'ClariCare <invitations@claricarebotanica.com>',
+            }),
+            signal: AbortSignal.timeout(15000),
+          });
+          const result = await response.json();
+          if (!response.ok) {
+            throw new Error(`Resend API returned ${response.status}: ${result.message || result.name || 'Email delivery failed'}`);
+          }
+        } else {
+          const smtpPort = Number(process.env.SMTP_PORT || 465);
+          const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
+          const smtpSecure = process.env.SMTP_SECURE
+            ? process.env.SMTP_SECURE.toLowerCase() === 'true'
+            : smtpPort === 465;
+          const transporter = nodemailer.createTransport({
+            host: smtpHost,
+            port: smtpPort,
+            secure: smtpSecure,
+            auth: { user: SMTP_USER, pass: SMTP_APP_PASSWORD.replace(/\s/g, '') },
+          });
+          await transporter.sendMail({ ...email, from: SMTP_FROM || SMTP_USER });
+        }
       } catch (error) {
         console.error(`${roleName} invitation email failed:`, error.message);
         return res.status(502).json({ error: 'The invitation could not be emailed. You can retry the invitation from the admin panel.' });

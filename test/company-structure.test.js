@@ -18,6 +18,9 @@ test('admins manage departments and positions, and employee invitations preserve
   const previousTransport = nodemailer.createTransport;
   const previousSmtpUser = process.env.SMTP_USER;
   const previousSmtpPassword = process.env.SMTP_APP_PASSWORD;
+  const previousResendApiKey = process.env.RESEND_API_KEY;
+  const previousResendFrom = process.env.RESEND_FROM;
+  const previousFetch = global.fetch;
   try {
     const admin = database.createUser({
       name: 'Structure Admin',
@@ -28,6 +31,13 @@ test('admins manage departments and positions, and employee invitations preserve
     nodemailer.createTransport = () => ({ sendMail: async () => ({ messageId: 'test-message' }) });
     process.env.SMTP_USER = 'test@example.com';
     process.env.SMTP_APP_PASSWORD = 'test-password';
+    process.env.RESEND_API_KEY = 'test-resend-key';
+    process.env.RESEND_FROM = 'ClariCare <invitations@claricarebotanica.com>';
+    let resendRequest;
+    global.fetch = async (url, options) => {
+      resendRequest = { url, options };
+      return { ok: true, status: 200, json: async () => ({ id: 'test-resend-message' }) };
+    };
     const app = createApp(database);
     const authorization = `Bearer ${tokenFor(admin)}`;
 
@@ -97,6 +107,10 @@ test('admins manage departments and positions, and employee invitations preserve
     assert.equal(invitation.body.user.positionId, internalPosition.body.position.id);
     assert.equal(invitation.body.user.departmentName, 'Customer Success');
     assert.equal(invitation.body.user.position, 'Customer Care Specialist');
+    assert.equal(resendRequest.url, 'https://api.resend.com/emails');
+    assert.equal(resendRequest.options.headers.Authorization, 'Bearer test-resend-key');
+    assert.equal(JSON.parse(resendRequest.options.body).from, 'ClariCare <invitations@claricarebotanica.com>');
+    assert.equal(JSON.parse(resendRequest.options.body).to, 'assigned@example.com');
 
     const rawUser = database.db.prepare('SELECT * FROM users WHERE id=?').get(invitation.body.user.id);
     const token = crypto.randomBytes(24).toString('hex');
@@ -108,10 +122,15 @@ test('admins manage departments and positions, and employee invitations preserve
     assert.equal(invitationDetails.body.invitation.position, 'Customer Care Specialist');
   } finally {
     nodemailer.createTransport = previousTransport;
+    global.fetch = previousFetch;
     if (previousSmtpUser === undefined) delete process.env.SMTP_USER;
     else process.env.SMTP_USER = previousSmtpUser;
     if (previousSmtpPassword === undefined) delete process.env.SMTP_APP_PASSWORD;
     else process.env.SMTP_APP_PASSWORD = previousSmtpPassword;
+    if (previousResendApiKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = previousResendApiKey;
+    if (previousResendFrom === undefined) delete process.env.RESEND_FROM;
+    else process.env.RESEND_FROM = previousResendFrom;
     database.db.close();
   }
 });
